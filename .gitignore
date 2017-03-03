@@ -1,0 +1,28 @@
+# User-specific files
+*.suo
+*.user
+.vs/
+*.orig
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+[Bb]in/
+[Oo]bj/
+
+*/TestResults/*
+
+# node
+node_modules/
+bower_components/
+karma_html/
+
+# logs
+[Ll]ogs/
+*.log
+
+# NuGet
+packages/
+
+build/*.json
+TestResults/
