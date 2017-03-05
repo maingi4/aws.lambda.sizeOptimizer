@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.Extensions.CommandLineUtils;
 
 namespace aws.lambda.sizeOptimizer
@@ -10,18 +8,6 @@ namespace aws.lambda.sizeOptimizer
     {
         public static void Main(string[] args)
         {
-            //[-?|-h|--help] [-r |--aws-region] [-n |--fn-name] [-p |--payload-path] [-64 |--use-64mb] [-l |--latency-margin] [-ar |--auto-resize]
-            // var manualArgs = new List<string>()
-            // {
-            //     "-r",
-            //     "us-west-2",
-            //     "-n",
-            //     "cloudncodeLogTransformer",
-            //     "-p",
-            //     @"C:\temp\lambda.json"
-            // };
-            // args = manualArgs.ToArray();
-
             var isCommandlineMode = args.Length > 0;
 
             if (isCommandlineMode)
@@ -37,96 +23,33 @@ namespace aws.lambda.sizeOptimizer
                 var acceptableDropInPerformanceString = PrintAndRetrieveInput("the acceptable drop in performance in % in favour of reduced price (e.g. 3.5 if upto 3.5% drop is fine)");
                 var resizeToRecommended = PrintAndRetrieveInput(" 'y' if you want to resize to the recommended value:");
 
-                double acceptableDropInPerformance;
-                if (!double.TryParse(acceptableDropInPerformanceString, out acceptableDropInPerformance))
-                    acceptableDropInPerformance = 3.0;
-                try
+                var manualArgs = new List<string>()
                 {
-                    Task.Run(async () =>
-                                {
-                                    var prog = new Program();
-                                    var result = await prog.RunOptimizer(regionName, functionName, payloadFilePath, startFrom64 == "y", acceptableDropInPerformance);
+                    "-r",
+                    regionName,
+                    "-n",
+                    functionName,
+                    "-p",
+                    payloadFilePath,
+                    "-l",
+                    string.IsNullOrWhiteSpace(acceptableDropInPerformanceString) ? "3": acceptableDropInPerformanceString
+                };
 
-                                    PrintResult(result);
+                if (startFrom64 == "y")
+                    manualArgs.Add("-64");
 
-                                    if (resizeToRecommended == "y")
-                                        await prog.ResizeToRecommended(result, regionName, functionName);
+                if (resizeToRecommended == "y")
+                    manualArgs.Add("-ar");
 
-                                }).GetAwaiter().GetResult();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("---------------------------------");
-                    Console.WriteLine(ex.ToString());
-                    Console.WriteLine("---------------------------------");
-                }
-                Console.WriteLine("press any key to exit...");
-                Console.ReadKey();
+                ConfigureCommandLine(manualArgs.ToArray(), true);
             }
         }
 
-        private async Task ResizeToRecommended(LambdaSizeCalculationResult result, string regionName, string functionName)
+        private static void StopForInputBeforeExit()
         {
-            if (result.OriginalMemory != result.Recommended.MemoryAllocated)
-            {
-                var conProvider = new LambdaConnectionProvider();
-                var client = conProvider.GetLambdaClient(regionName);
-                var resizer = new LambdaResizer(client);
-                await resizer.Resize(functionName, result.Recommended.MemoryAllocated);
-                Console.WriteLine("successfully resized.");
-            }
+            Console.WriteLine("press any key to exit...");
+            Console.ReadKey();
         }
-
-        private async Task<LambdaSizeCalculationResult> RunOptimizer(string regionName, string functionName, string payloadFilePath, bool startFrom64, double acceptableDropInPerformance)
-        {
-            var conProvider = new LambdaConnectionProvider();
-            var client = conProvider.GetLambdaClient(regionName);
-            var runner = new LambdaTestRunner(client);
-
-            var originalResult = await runner.RunTestAsync(new LambdaInvocationRequest(functionName, LambdaInvocationType.RequestResponse, payloadFilePath));
-
-            var sizes = new LambdaSizeListProvider(startFrom64).GetLambdaSizes(originalResult.MemoryUsed).Where(x => x != originalResult.MemoryAllocated).ToList();
-            var resizer = new LambdaResizer(client);
-
-            var results = new List<LambdaSizeCalculationResultItem>(sizes.Count + 1);
-            results.Add(originalResult);
-            bool didResizeHappen = false;
-            try
-            {
-                foreach (var size in sizes)
-                {
-                    await resizer.Resize(functionName, size);
-                    didResizeHappen = true;
-
-                    var result = await runner.RunTestAsync(new LambdaInvocationRequest(functionName, LambdaInvocationType.RequestResponse, payloadFilePath));
-                    results.Add(result);
-                }
-            }
-            finally
-            {
-                if (didResizeHappen)
-                {
-                    try
-                    {
-                        await resizer.Resize(functionName, originalResult.MemoryAllocated);
-                    }
-                    catch (Exception)
-                    {
-                        Console.WriteLine("ATTENTION ATTENTION ATTENTION ATTENTION ATTENTION ATTENTION");
-                        Console.WriteLine($"Resize to original memory size '{originalResult.MemoryAllocated}' failed, do it manually.");
-                        Console.WriteLine("ATTENTION ATTENTION ATTENTION ATTENTION ATTENTION ATTENTION");
-                        throw;
-                    }
-                }
-            }
-
-            var calc = new LambdaBestSizeCalculator();
-
-            var calculatedResult = calc.Calculate(results, acceptableDropInPerformance, originalResult.MemoryAllocated);
-
-            return calculatedResult;
-        }
-
 
         public static string PrintAndRetrieveInput(string inputName)
         {
@@ -155,11 +78,11 @@ namespace aws.lambda.sizeOptimizer
                 Console.WriteLine($"Your Lambda is already appropriately sized, memory size is at {result.Recommended.MemoryAllocated} MB, it had latency of {result.Recommended.Latency} ms.");
         }
 
-        public static void ConfigureCommandLine(string[] args)
+        public static void ConfigureCommandLine(string[] args, bool stopForInput = false)
         {
-            /*aws.lambda.sizeOptimizer.dll [-?|-h|--help] [-r |--aws-region] [-n |--fn-name] [-p |--payload-path] [-64 |--use-64mb] [-l |--latency-margin] [-ar |--auto-resize]
+            /*aws.lambda.sizeOptimizer.dll [-?|-h|--help] [-r |--aws-region <region>] [-n |--fn-name <functionName>] [-p |--payload-path <payloadPath>] [-64 |--use-64mb] [-l |--latency-margin <acceptableDropInPerformance>] [-ar |--auto-resize]
             */
-            var commandLine = new CommandLineApplication(true);
+            var commandLine = new CommandLineApplication(false);
 
             var region = commandLine.Option("-r |--aws-region <region>", "The AWS region in which the Lambda function resides, e.g. us-east-1", CommandOptionType.SingleValue);
             var functionName = commandLine.Option("-n |--fn-name <functionName>", "The name of the Lambda function which is the target", CommandOptionType.SingleValue);
@@ -190,13 +113,13 @@ namespace aws.lambda.sizeOptimizer
 
                 try
                 {
-                    var prog = new Program();
-                    var result = await prog.RunOptimizer(region.Value(), functionName.Value(), payloadPath.Value(), startFrom64.HasValue(), latencyMargin);
+                    var prog = new CommandRunner();
+                    var result = await prog.RunOptimizerAsync(region.Value(), functionName.Value(), payloadPath.Value(), startFrom64.HasValue(), latencyMargin);
 
                     PrintResult(result);
 
                     if (autoResizeToRecommended.HasValue())
-                        await prog.ResizeToRecommended(result, region.Value(), functionName.Value());
+                        await prog.ResizeToRecommendedAsync(result, region.Value(), functionName.Value());
                 }
                 catch (Exception ex)
                 {
@@ -208,12 +131,9 @@ namespace aws.lambda.sizeOptimizer
             });
 
             commandLine.Execute(args);
-            // commandLine.Command("auto",
-            // (target) =>
-            // {
 
-            // }
-            // );
+            if (stopForInput)
+                StopForInputBeforeExit();
         }
     }
 }
