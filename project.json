@@ -6,7 +6,8 @@
   },
   "dependencies": {
      "AWSSDK.Core": "3.3.8.2",
-      "AWSSDK.Lambda": "3.3.2.6"
+      "AWSSDK.Lambda": "3.3.2.6",
+      "Microsoft.Extensions.CommandLineUtils": "1.1.0-*"
   },
   "frameworks": {
     "netcoreapp1.0": {
